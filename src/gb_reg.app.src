@@ -1,0 +1,8 @@
+{application, gb_reg,
+ [{description, "Growbeard Registry Management"},
+  {vsn, "0.1"},
+  {modules, []},
+  {registered, []},
+  {applications, [kernel, stdlib]},
+  {mod, {gb_reg_app,[]}}
+ ]}.
