@@ -344,7 +344,7 @@ make_lookup_clauses(Arg1, Entries) ->
 %% @end
 %%--------------------------------------------------------------------
 make_lookup_clauses(Key, Value, {Arg1, Acc}) ->
-    Pattern = [cerl:c_abstract(Key)],
+    Pattern = [cerl:abstract(Key)],
     Guard = cerl:c_atom(true),
     Body = cerl:abstract(Value), 
     Clause = cerl:c_clause(Pattern, Guard, Body),
