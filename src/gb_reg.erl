@@ -19,13 +19,17 @@
 %% @end
 %%%===================================================================
 
--module(gb_reg_server).
+-module(gb_reg).
 
 %% API
 -export([start/0,
+	 insert/2,
 	 insert/3,
+	 add/2,
+	 add_keys/2,
 	 delete/2,
-	 lookup/2]).
+	 lookup/2,
+	 all/1]).
 
 -export([new/1,
 	 new/2,
@@ -39,13 +43,13 @@
 %% Insert a new register entry for Key -> Value mapping to module Mod.
 %% @end
 %%--------------------------------------------------------------------
--spec insert(Mod :: module(), Key :: string(), Value :: term()) ->
-    {ok, Beam :: binary()} | {error, Reason :: term()}.
+-spec insert(Mod :: module(), Key :: term(), Value :: term()) ->
+    ok | {error, Reason :: term()}.
 insert(Mod, Key, Value) ->
     insert(Mod, Key, Value, is_literal_term([Key, Value])).
 
 -spec insert(Mod :: module(),
-	     Key :: string(),
+	     Key :: term(),
 	     Value :: term(),
 	     Bool :: true | false) ->
     {ok, Beam :: binary()} | {error, Reason :: term()}.
@@ -53,6 +57,66 @@ insert(Mod, Key, Value, true) ->
     gen_server:call(Mod, {insert, Mod, Key, Value});
 insert(_, _, Value, false) ->
     {error, {data_not_literal, Value}}.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Insert a list of KVL entries to module Mod.
+%% @end
+%%--------------------------------------------------------------------
+-spec insert(Mod :: module(), Kvl :: [{term(), term()}]) ->
+    ok | {error, Reason :: term()}.
+insert(Mod, Kvl) ->
+    insert_kvl(Mod, Kvl, is_literal_term(Kvl)).
+
+-spec insert_kvl(Mod :: module(),
+		 Kvl :: [{term(), term()}],
+		 Bool :: true | false) ->
+    {ok, Beam :: binary()} | {error, Reason :: term()}.
+insert_kvl(Mod, Kvl, true) ->
+    gen_server:call(Mod, {insert_kvl, Mod, Kvl});
+insert_kvl(_, Kvl, false) ->
+    {error, {data_not_literal, Kvl}}.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Add a list of KVL entries to module Mod only if Keys do not exist
+%% already.
+%% @end
+%%--------------------------------------------------------------------
+-spec add(Mod :: module(), Kvl :: [{term(), term()}]) ->
+    ok | {error, Reason :: term()}.
+add(Mod, Kvl) ->
+    add_kvl(Mod, Kvl, is_literal_term(Kvl)).
+
+-spec add_kvl(Mod :: module(),
+	      Kvl :: [{term(), term()}],
+	      Bool :: true | false) ->
+    ok | {error, Reason :: term()}.
+add_kvl(Mod, Kvl, true) ->
+    gen_server:call(Mod, {add_kvl, Mod, Kvl});
+add_kvl(_, Kvl, false) ->
+    {error, {data_not_literal, Kvl}}.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Add a list of Keys to module Mod only if Keys do not exist already.
+%% Value will be added as an incremented integer, encoded as unsigned
+%% integer in binary. Additionally {Value, Key} entries will be added.
+%% @end
+%%--------------------------------------------------------------------
+-spec add_keys(Mod :: module(), Keys :: [term()]) ->
+    ok | {error, Reason :: term()}.
+add_keys(Mod, Keys) ->
+    add_keys(Mod, Keys, is_literal_term(Keys)).
+
+-spec add_keys(Mod :: module(),
+	       Keys :: [term()],
+	       Bool :: true | false) ->
+    ok | {error, Reason :: term()}.
+add_keys(Mod, Keys, true) ->
+    gen_server:call(Mod, {add_keys, Mod, Keys});
+add_keys(_, Keys, false) ->
+    {error, {data_not_literal, Keys}}.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -76,14 +140,27 @@ lookup(Mod, Key) ->
 
 %%--------------------------------------------------------------------
 %% @doc
+%% Lookup for all entries from module Mod.
+%% @end
+%%--------------------------------------------------------------------
+-spec all(Mod :: module()) ->
+    Entries :: map().
+all(Mod) ->
+    Mod:entries().
+
+%%--------------------------------------------------------------------
+%% @doc
 %% Generate new register module.
 %% @end
 %%--------------------------------------------------------------------
 -spec new(Name :: string()) ->
-    ok | {error, Reason ::term()}.
+    {ok, Module :: module()} | {error, Reason ::term()}.
 new(Name) ->
     Dir = get_registry_dir(),
-    supervisor:start_child(gb_reg_worker_sup, [{dir, Dir}, {name, Name}]).
+    Module = get_module_name(Name),
+    Args = [{dir, Dir}, {mod, Module}],
+    {ok, _} = supervisor:start_child(gb_reg_worker_sup, [Args]),
+    {ok, Module}.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -96,9 +173,10 @@ new(Name, Tuples) ->
     case lists:usort([is_literal_term(KV) || KV <- Tuples]) of
 	[true] ->
 	    Dir = get_registry_dir(),
-	    supervisor:start_child(gb_reg_worker_sup, [{dir, Dir},
-						       {name, Name},
-						       {entries, Tuples}]);
+	    Module = get_module_name(Name),
+	    Args = [{dir, Dir}, {mod, Module},{entries, Tuples}],
+	    {ok, _} = supervisor:start_child(gb_reg_worker_sup, [Args]),
+	    {ok, Module};
 	_ ->
 	    {error, non_literal_term}
     end.
@@ -123,9 +201,9 @@ start() ->
     RegDir = get_registry_dir(),
     ok = filelib:ensure_dir(RegDir),
     {ok, Files} = file:list_dir(RegDir),
-    Args = [{load, true}],
-    [supervisor:start_child(gb_reg_worker_sup, [{file, F} | Args]) ||
-	F <- Files],
+    Args = [{load, true}, {dir, RegDir}],
+    [supervisor:start_child(gb_reg_worker_sup, 
+	[[{file, F}, {mod, erlang:list_to_atom(F)} | Args]]) || F <- Files],
     ignore.
 
 %%%===================================================================
@@ -174,4 +252,9 @@ is_literal_term_list([]) ->
     string().
 get_registry_dir() ->
     ROOTDIR = os:getenv("ROOTDIR"),
-    filename:join(ROOTDIR, "data/gb_reg").
+    filename:join(ROOTDIR, "data/gb_reg/").
+
+-spec get_module_name(Name :: string()) ->
+    Module :: module().
+get_module_name(Name) ->
+    erlang:list_to_atom("$"++Name).

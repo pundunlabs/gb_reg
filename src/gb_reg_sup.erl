@@ -69,15 +69,15 @@ init([]) ->
 
     SupFlags = {RestartStrategy, MaxRestarts, MaxSecondsBetweenRestarts},
 
-    RegServer = {gb_reg_server,
-		 {gb_reg_server, start_link, []},
-		 temporary, infinity, worker, [gb_reg_server]},
+    GbReg = {gb_reg,
+	     {gb_reg, start, []},
+	     temporary, infinity, worker, [gb_reg]},
 
     RegWorkerSup = {gb_reg_worker_sup,
 		    {gb_reg_worker_sup, start_link, []},
 		    permanent, 2000, supervisor, [gb_reg_worker_sup]},
 
-    {ok, {SupFlags, [RegWorkerSup, RegServer]}}.
+    {ok, {SupFlags, [RegWorkerSup, GbReg]}}.
 
 %%%===================================================================
 %%% Internal functions

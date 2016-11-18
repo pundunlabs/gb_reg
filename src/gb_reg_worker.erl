@@ -27,11 +27,11 @@
 
 %% gen_server callbacks
 -export([init/1,
-	handle_call/3,
-	handle_cast/2,
-	handle_info/2,
-	terminate/2,
-	code_change/3]).
+	 handle_call/3,
+	 handle_cast/2,
+	 handle_info/2,
+	 terminate/2,
+	 code_change/3]).
 
 %%%===================================================================
 %%% API
@@ -45,16 +45,15 @@
 %% @end
 %%--------------------------------------------------------------------
 start_link(Args) ->
+    Module = proplists:get_value(mod, Args),
     case proplists:get_value(load, Args, false) of
 	true ->
-	    Module = proplists:get_value(file, Args),
 	    gen_server:start_link({local, Module}, ?MODULE,
-				  [[load, {mod, Module} | Args]], []);
+				  [load | Args], []);
 	false ->
-	    Name = proplists:get_value(name, Args),
-	    Module = get_module_name(Name),
+	    Module = proplists:get_value(mod, Args),
 	    gen_server:start_link({local, Module}, ?MODULE,
-				  [[new, {mod, Module} | Args]], [])
+				  [new | Args], [])
     end.
 
 %%%===================================================================
@@ -74,9 +73,9 @@ start_link(Args) ->
 %%--------------------------------------------------------------------
 init([load | Args]) ->
     File = proplists:get_value(file, Args),
+    Module = proplists:get_value(mod, Args),
     Dir = proplists:get_value(dir, Args),
     Filename = filename:join([Dir, File]),
-    Module = proplists:get_value(mod, Args),
     {ok, Beam} =  file:read_file(Filename),
     load_register(Module, Beam),
     {ok, #{filename => Filename}};
@@ -85,7 +84,7 @@ init([new | Args]) ->
     Module = proplists:get_value(mod, Args),
     Filename = filename:join([Dir, Module]),
     Entries = proplists:get_value(entries, Args, []),
-    {ok, Module, Beam} = gen_beam(Module, Entries),
+    {ok, _, Beam} = gen_beam(Module, Entries, 0),
     store_beam(Filename, Beam),
     load_register(Module, Beam),
     {ok, #{filename => Filename}}.
@@ -104,26 +103,66 @@ init([new | Args]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_call({add_keys, Mod, Keys}, _From, State = #{filename := Filename}) ->
+    Filter = fun(Key) ->
+		case Mod:lookup(Key) of
+		    undefined -> true;
+		    _ -> false
+		end
+	    end,
+    NewKeys = lists:filter(Filter, Keys),
+    case generate_entries(Mod:ref(), NewKeys, []) of
+	{_, Add} when map_size(Add) == 0 ->
+	    {reply, ok, State};
+	{Ref, Add} ->
+	    Merged = maps:merge(Mod:entries(), Add),
+	    Reply = regen_register(Mod, Filename, Merged, Ref),
+	    {reply, element(1, Reply), State}
+	end;
+handle_call({add_kvl, Mod, Kvl}, _From, State = #{filename := Filename}) ->
+    Filter = fun({Key, _}) ->
+		case Mod:lookup(Key) of
+		    undefined -> true;
+		    _ -> false
+		end
+	    end,
+    NewKvl = lists:filter(Filter, Kvl),
+    Add = maps:from_list(NewKvl),
+    Merged = maps:merge(Mod:entries(), Add),
+    Reply = regen_register(Mod, Filename, Merged, Mod:ref()),
+    {reply, element(1, Reply), State};
 handle_call({insert, Mod, Key, Val}, _From, State = #{filename := Filename}) ->
     case Mod:entries() of
     #{Key := Val} ->
 	{reply, ok, State};
     Entries ->
-	Reply = regen_register(Mod, Filename, Entries#{Key => Val}),
-	{reply, Reply, State}
+	Reply = regen_register(Mod, Filename, Entries#{Key => Val}, Mod:ref()),
+	{reply, element(1,Reply), State}
+    end;
+handle_call({insert_kvl, Mod, Kvl}, _From, State = #{filename := Filename}) ->
+    Add = maps:from_list(Kvl),
+    Entries = Mod:entries(),
+    case maps:merge(Entries, Add) of
+    Entries ->
+	{reply, ok, State};
+    Merged ->
+	Reply = regen_register(Mod, Filename, Merged, Mod:ref()),
+	{reply, element(1, Reply), State}
     end;
 handle_call({delete, Mod, Key}, _From, State = #{filename := Filename}) ->
     case Mod:entries() of
 	#{Key := _} = Entries ->
-	    Reply = regen_register(Mod, Filename, maps:remove(Key, Entries)),
-	    {reply, Reply, State};
+	    Reply = regen_register(Mod, Filename,
+				   maps:remove(Key, Entries), Mod:ref()),
+	    {reply, element(1,Reply), State};
 	_ ->
 	    {reply, ok, State}
     end;
 handle_call({purge, Mod}, _From, State = #{filename := Filename}) ->
+    code:purge(Mod), 
+    code:delete(Mod), 
     file:delete(Filename),
-    true = code:purge(Mod), 
-    {stop, normal, State};
+    {stop, normal,ok, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -189,10 +228,11 @@ code_change(_OldVsn, State, _Extra) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec gen_beam(Mod :: module(),
-	       Entries :: [{term(), term()}]) ->
+	       Tuples :: [{term(), term()}],
+	       Ref :: integer()) ->
     {ok, Mod :: module(), Beam :: binary()}.
-gen_beam(Mod, Entries) ->
-    CEForms = make_mod(Mod, Entries),
+gen_beam(Mod, Tuples, Ref) ->
+    CEForms = make_mod(Mod, maps:from_list(Tuples), Ref),
     compile:forms(CEForms, [from_core, binary]).
 
 %%--------------------------------------------------------------------
@@ -202,11 +242,12 @@ gen_beam(Mod, Entries) ->
 %%--------------------------------------------------------------------
 -spec regen_register(Mod :: module(),
 		     Filename :: string(),
-		     Entries :: [{string(), term()}]) ->
+		     Entries :: map(),
+		     Ref :: integer()) ->
     {ok, Beam :: binary()}.
-regen_register(Mod, Filename, Entries) ->
-    CEForms = make_mod(Mod, Entries),
-    {ok, Mod, Beam} = compile:forms(CEForms, [from_core, binary]),
+regen_register(Mod, Filename, Entries, Ref) ->
+    CEForms = make_mod(Mod, Entries, Ref),
+    {ok, _, Beam} = compile:forms(CEForms, [from_core, binary]),
     store_beam(Filename, Beam),
     load_register(Mod, Beam).
 
@@ -240,16 +281,19 @@ load_register(Mod, Bin) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec make_mod(Mod :: module(),
-	       Entries :: map()) ->
+	       Entries :: map(),
+	       Ref :: integer()) ->
     term().
-make_mod(Mod, Entries) ->
+make_mod(Mod, Entries, Ref) ->
     ModuleName = cerl:c_atom(Mod),
     cerl:c_module(ModuleName,
 		  [cerl:c_fname(entries, 0),
+		   cerl:c_fname(ref,0),
 		   cerl:c_fname(lookup, 1),
 		   cerl:c_fname(module_info, 0),
 		   cerl:c_fname(module_info, 1)],
 		  [make_entries_fun(Entries),
+		   make_ref_fun(Ref),
 		   make_lookup_fun(Entries) | mod_info(ModuleName)]).
 
 %%--------------------------------------------------------------------
@@ -259,6 +303,14 @@ make_mod(Mod, Entries) ->
 %%--------------------------------------------------------------------
 make_entries_fun(Entries) ->
     {cerl:c_fname(entries,0), cerl:c_fun([], cerl:abstract(Entries))}.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Make entries/0 function.
+%% @end
+%%--------------------------------------------------------------------
+make_ref_fun(Ref) ->
+    {cerl:c_fname(entries,0), cerl:c_fun([], cerl:c_int(Ref))}.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -292,7 +344,7 @@ make_lookup_clauses(Arg1, Entries) ->
 %% @end
 %%--------------------------------------------------------------------
 make_lookup_clauses(Key, Value, {Arg1, Acc}) ->
-    Pattern = [cerl:c_string(Key)],
+    Pattern = [cerl:c_abstract(Key)],
     Guard = cerl:c_atom(true),
     Body = cerl:abstract(Value), 
     Clause = cerl:c_clause(Pattern, Guard, Body),
@@ -313,7 +365,13 @@ mod_info(Name) ->
 	     cerl:c_fun([Key], cerl:c_call(M, F, [Name, Key]))},
     [Info0, Info1].
 
--spec get_module_name(Name :: string()) ->
-    Module :: module().
-get_module_name(Name) ->
-    erlang:list_to_atom("$"++Name).
+-spec generate_entries(Ref :: integer(),
+		       Keys :: [term()],
+		       Acc :: [{term(), term()}]) ->
+    {NewRef :: integer(), Map :: map()}.
+generate_entries(Ref, [Key | Rest], Acc) ->
+    Bin = binary:encode_unsigned(Ref, big),
+    generate_entries(Ref + 1, Rest, [{Key, Bin}, {Bin, Key} | Acc]);
+generate_entries(Ref, [], Acc) ->
+    {Ref, maps:from_list(Acc)}.
+
