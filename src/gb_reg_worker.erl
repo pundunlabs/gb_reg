@@ -159,8 +159,8 @@ handle_call({delete, Mod, Key}, _From, State = #{filename := Filename}) ->
 	    {reply, ok, State}
     end;
 handle_call({purge, Mod}, _From, State = #{filename := Filename}) ->
-    code:purge(Mod), 
-    code:delete(Mod), 
+    code:purge(Mod),
+    code:delete(Mod),
     file:delete(Filename),
     {stop, normal,ok, State};
 handle_call(_Request, _From, State) ->
@@ -288,7 +288,7 @@ make_mod(Mod, Entries, Ref) ->
     ModuleName = cerl:c_atom(Mod),
     cerl:c_module(ModuleName,
 		  [cerl:c_fname(entries, 0),
-		   cerl:c_fname(ref,0),
+		   cerl:c_fname(ref, 0),
 		   cerl:c_fname(lookup, 1),
 		   cerl:c_fname(module_info, 0),
 		   cerl:c_fname(module_info, 1)],
@@ -306,7 +306,7 @@ make_entries_fun(Entries) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Make entries/0 function.
+%% Make ref/0 function.
 %% @end
 %%--------------------------------------------------------------------
 make_ref_fun(Ref) ->
@@ -322,9 +322,7 @@ make_lookup_fun(Entries) ->
     Else = cerl:c_var('Else'),
     True = cerl:c_atom(true),
     Undefined = cerl:c_atom(undefined),
-
     Clauses = make_lookup_clauses(Arg1, Entries),
-    
     LastClause = cerl:c_clause([Else], True, Undefined),
     Case = cerl:c_case(Arg1, Clauses ++ [LastClause]),
     {cerl:c_fname(lookup,1), cerl:c_fun([Arg1], Case)}.
@@ -346,9 +344,9 @@ make_lookup_clauses(Arg1, Entries) ->
 make_lookup_clauses(Key, Value, {Arg1, Acc}) ->
     Pattern = [cerl:abstract(Key)],
     Guard = cerl:c_atom(true),
-    Body = cerl:abstract(Value), 
+    Body = cerl:abstract(Value),
     Clause = cerl:c_clause(Pattern, Guard, Body),
-    {Arg1,[Clause | Acc]}.
+    {Arg1, [Clause | Acc]}.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -370,8 +368,7 @@ mod_info(Name) ->
 		       Acc :: [{term(), term()}]) ->
     {NewRef :: integer(), Map :: map()}.
 generate_entries(Ref, [Key | Rest], Acc) ->
-    Bin = binary:encode_unsigned(Ref, big),
-    generate_entries(Ref + 1, Rest, [{Key, Bin}, {Bin, Key} | Acc]);
+    generate_entries(Ref + 1, Rest, [{Key, Ref}, {Ref, Key} | Acc]);
 generate_entries(Ref, [], Acc) ->
     {Ref, maps:from_list(Acc)}.
 
