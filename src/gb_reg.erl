@@ -252,7 +252,7 @@ is_literal_term_list([]) ->
     string().
 get_registry_dir() ->
     ROOTDIR = os:getenv("ROOTDIR"),
-    filename:join(ROOTDIR, "data/gb_reg/").
+    filename:join(ROOTDIR, "data/gb_reg")++"/".
 
 -spec get_module_name(Name :: string()) ->
     Module :: module().

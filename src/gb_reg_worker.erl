@@ -310,7 +310,7 @@ make_entries_fun(Entries) ->
 %% @end
 %%--------------------------------------------------------------------
 make_ref_fun(Ref) ->
-    {cerl:c_fname(entries,0), cerl:c_fun([], cerl:c_int(Ref))}.
+    {cerl:c_fname(ref,0), cerl:c_fun([], cerl:c_int(Ref))}.
 
 %%--------------------------------------------------------------------
 %% @doc
