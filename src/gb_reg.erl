@@ -156,24 +156,29 @@ all(Mod) ->
 -spec new(Name :: string()) ->
     {ok, Module :: module()} | {error, Reason ::term()}.
 new(Name) ->
-    Dir = get_registry_dir(),
-    Module = get_module_name(Name),
-    Args = [{dir, Dir}, {mod, Module}],
-    {ok, _} = supervisor:start_child(gb_reg_worker_sup, [Args]),
-    {ok, Module}.
+    new(Name, []).
 
 %%--------------------------------------------------------------------
 %% @doc
 %% Generate new register module and initialize with given entries.
 %% @end
 %%--------------------------------------------------------------------
--spec new(Name :: string(), Tuples :: [{Key :: term(), Value :: term()}]) ->
+-spec new(Name :: string(),
+	  Tuples :: [{Key :: term(), Value :: term()}]) ->
     {ok, Mod :: module()} | {error, Reason ::term()}.
-new(Name, Tuples) ->
-    case lists:usort([is_literal_term(KV) || KV <- Tuples]) of
-	[true] ->
+new(Name, Tuples) when is_list(Name) ->
+    Module = get_module_name(Name),
+    case whereis(Module) of
+	undefined ->
+	    new_(Module, Tuples);
+	_Pid ->
+	    {error, {already_exists, Module}}
+    end.
+
+new_(Module, Tuples) ->
+    case is_literal_term(Tuples) of
+	true ->
 	    Dir = get_registry_dir(),
-	    Module = get_module_name(Name),
 	    Args = [{dir, Dir}, {mod, Module},{entries, Tuples}],
 	    {ok, _} = supervisor:start_child(gb_reg_worker_sup, [Args]),
 	    {ok, Module};
