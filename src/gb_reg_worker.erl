@@ -77,7 +77,7 @@ init([load | Args]) ->
     Dir = proplists:get_value(dir, Args),
     Filename = filename:join([Dir, File]),
     {ok, Beam} =  file:read_file(Filename),
-    load_register(Module, Beam),
+    load_register(Module, Filename, Beam),
     {ok, #{filename => Filename}};
 init([new | Args]) ->
     Dir = proplists:get_value(dir, Args),
@@ -86,7 +86,7 @@ init([new | Args]) ->
     Entries = proplists:get_value(entries, Args, []),
     {ok, _, Beam} = gen_beam(Module, Entries, 0),
     store_beam(Filename, Beam),
-    load_register(Module, Beam),
+    load_register(Module, Filename, Beam),
     {ok, #{filename => Filename}}.
 
 %%--------------------------------------------------------------------
@@ -249,7 +249,7 @@ regen_register(Mod, Filename, Entries, Ref) ->
     CEForms = make_mod(Mod, Entries, Ref),
     {ok, _, Beam} = compile:forms(CEForms, [from_core, binary]),
     store_beam(Filename, Beam),
-    load_register(Mod, Beam).
+    load_register(Mod, Filename, Beam).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -268,10 +268,11 @@ store_beam(Filename, Bin) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec load_register(Mod :: module(),
+		    Filename :: string(),
 		    Bin :: binary()) ->
     {ok, Bin :: binary()}.
-load_register(Mod, Bin) ->
-    {module, _ } = code:load_binary(Mod, [], Bin),
+load_register(Mod, Filename, Bin) ->
+    {module, _ } = code:load_binary(Mod, Filename, Bin),
     {ok, Bin}.
 
 %%--------------------------------------------------------------------
